@@ -33,10 +33,7 @@ To create a GitHub repo and push:
 
 1. Create repo on GitHub (via web UI or `gh` CLI).
 2. Then run:
-```
+~~~
 git remote add origin https://github.com/<your-username>/<repo>.git
 git branch -M main
 git push -u origin main
-```
-
-If you'd like, I can (a) create and push the remote for you if you provide access, or (b) give commands to use the `gh` CLI if you have it installed.
