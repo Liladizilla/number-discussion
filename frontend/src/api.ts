@@ -1,8 +1,11 @@
-// Determine API URL at runtime
+// Determine API URL: use build-time env var if set, else dev server localhost
 const getApiUrl = () => {
-  const host = typeof window !== 'undefined' ? window.location.hostname : 'localhost'
-  const port = 3001
-  return `http://${host}:${port}`
+  // Build-time environment variable (set during `npm run build`)
+  if (import.meta.env.VITE_API_URL) {
+    return import.meta.env.VITE_API_URL
+  }
+  // Development fallback: assume backend on same host at port 3001
+  return 'http://localhost:3001'
 }
 
 const API_URL = getApiUrl()
