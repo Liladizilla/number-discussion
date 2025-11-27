@@ -2,7 +2,8 @@ import express from 'express';
 import cors from 'cors';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
-import { initDB, getUserByUsername, createUser, getAllCalculations, getCalculationsByParent, createCalculation } from './db';
+import { initDB } from './db';
+import pool from './db';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -34,15 +35,18 @@ app.post('/api/register', async (req: any, res: any) => {
       return res.status(400).json({ error: 'Username and password required' });
     }
 
-    const existing = await getUserByUsername(username);
-    if (existing) {
+    const existingRes = await pool.query('SELECT id FROM users WHERE username = $1', [username]);
+    if (existingRes.rows.length) {
       return res.status(400).json({ error: 'Username already exists' });
     }
 
     const hashedPassword = await bcrypt.hash(password, 10);
-    const user = await createUser(username, hashedPassword);
-    
-    res.json({ user: { id: user.id, username: user.username } });
+    const insert = await pool.query(
+      'INSERT INTO users (username, password_hash) VALUES ($1, $2) RETURNING id, username',
+      [username, hashedPassword]
+    );
+
+    res.json({ user: insert.rows[0] });
   } catch (error: any) {
     res.status(500).json({ error: 'Registration failed' });
   }
@@ -52,8 +56,8 @@ app.post('/api/register', async (req: any, res: any) => {
 app.post('/api/login', async (req: any, res: any) => {
   try {
     const { username, password } = req.body;
-
-    const user = await getUserByUsername(username);
+    const userRes = await pool.query('SELECT id, username, password_hash FROM users WHERE username = $1', [username]);
+    const user = userRes.rows[0];
 
     if (!user || !(await bcrypt.compare(password, user.password_hash))) {
       return res.status(401).json({ error: 'Invalid credentials' });
@@ -69,8 +73,8 @@ app.post('/api/login', async (req: any, res: any) => {
 // Get all calculations (tree)
 app.get('/api/calculations', async (req: any, res: any) => {
   try {
-    const calcs = await getAllCalculations();
-    res.json(calcs);
+    const result = await pool.query('SELECT * FROM calculations ORDER BY id');
+    res.json(result.rows);
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch calculations' });
   }
@@ -81,9 +85,11 @@ app.post('/api/calculations', authenticateToken, async (req: any, res: any) => {
   try {
     const { number } = req.body;
     const userId = req.user.id;
-
-    const calc = await createCalculation(userId, null, number, null);
-    res.json(calc);
+    const result = await pool.query(
+      'INSERT INTO calculations (user_id, parent_id, operation, number, result) VALUES ($1, $2, $3, $4, $5) RETURNING *',
+      [userId, null, null, number, number]
+    );
+    res.json(result.rows[0]);
   } catch (error) {
     res.status(500).json({ error: 'Failed to create calculation' });
   }
@@ -95,8 +101,7 @@ app.post('/api/calculations/:parentId/operations', authenticateToken, async (req
     const { parentId } = req.params;
     const { operation, number } = req.body;
     const userId = req.user.id;
-
-    if (!operation || !['+',' -','*','/'].includes(operation)) {
+    if (!operation || !['+', '-', '*', '/'].includes(operation)) {
       return res.status(400).json({ error: 'Invalid operation' });
     }
 
@@ -104,8 +109,25 @@ app.post('/api/calculations/:parentId/operations', authenticateToken, async (req
       return res.status(400).json({ error: 'Division by zero' });
     }
 
-    const calc = await createCalculation(userId, parseInt(parentId), number, operation);
-    res.json(calc);
+    // fetch parent result
+    const parentRes = await pool.query('SELECT result FROM calculations WHERE id = $1', [parseInt(parentId)]);
+    if (!parentRes.rows.length) return res.status(404).json({ error: 'Parent not found' });
+    const parentResult = parseFloat(parentRes.rows[0].result);
+
+    let resultNumber = number;
+    switch (operation) {
+      case '+': resultNumber = parentResult + number; break;
+      case '-': resultNumber = parentResult - number; break;
+      case '*': resultNumber = parentResult * number; break;
+      case '/': resultNumber = parentResult / number; break;
+    }
+
+    const insertRes = await pool.query(
+      'INSERT INTO calculations (user_id, parent_id, operation, number, result) VALUES ($1, $2, $3, $4, $5) RETURNING *',
+      [userId, parseInt(parentId), operation, number, resultNumber]
+    );
+
+    res.json(insertRes.rows[0]);
   } catch (error) {
     res.status(500).json({ error: 'Failed to add operation' });
   }
